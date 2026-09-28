@@ -1,0 +1,10 @@
+{
+    "format_version": 1,
+    "id": "community.year_progress",
+    "name": "Year Progress",
+    "version": "1.2.0",
+    "description": "Year / month / century progress bar",
+    "author": "alex",
+    "heap_size_kib": 256,
+    "debug": false
+}
