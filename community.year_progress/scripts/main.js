@@ -17,11 +17,11 @@ var AUDIO_URL = "http://127.0.0.1/api/audio/play";
 var CALC_SND = "sounds/calc.snd";
 
 // ── Timing (ms) ─────────────────────────────────────────────
-var FRAME_ANIM = 30;       // pacing while something is moving fast
+var FRAME_ANIM = 16;       // pacing while something is moving (draws usually take longer)
 var FRAME_LIVE = 50;       // pacing in the steady state
 var INTRO_MS   = 2600;     // bar fill + number count-up (sounds/calc.snd is synced to this)
 var DRAIN_MS   = 600;      // old bar empties on mode switch
-var TITLE_MS   = 1700;     // title card between modes
+var TITLE_MS   = 2800;     // title card between modes
 var GLOW_MS    = 1100;     // flash when the fill lands
 var SHIMMER_EVERY = 6000;  // gap between shimmer sweeps
 var SHIMMER_MS    = 2400;
@@ -35,7 +35,6 @@ var BAR_H = 9;
 var TEXT_Y = -1;           // small: glyph top = y + 2  -> rows 1-5
 var TITLE_Y = -1;          // bold:  glyph top = y + 2  -> rows 1-7
 var SUB_Y = 8;             // small  -> rows 10-14
-var HIDE_X = -300;
 var MAX_DIVIDERS = 11;
 
 // ── Glyph advances (px, incl. 1 px spacing), from busy_*px.ttf ──
@@ -198,7 +197,6 @@ function pctString(p, minInt) {
 
 // ── Element builders ────────────────────────────────────────
 function rect(id, x, y, w, h, c1, c2, z, dir) {
-  if (w <= 0 || h <= 0) return hiddenEl(id, "rectangle");
   var el = { id: id, type: "rectangle", display: "front", align: "top_left",
     x: x, y: y, width: w, height: h, border_width: 0, z_index: z };
   if (c2) { el.fill = dir || "gradient_v"; el.fill_colors = [c1, c2]; }
@@ -209,11 +207,13 @@ function text(id, s, x, y, font, color, z) {
   return { id: id, type: "text", display: "front", align: "top_left",
     x: x, y: y, text: s, font: font, color: color, z_index: z };
 }
-function hiddenEl(id, type) {
-  if (type === "text") return { id: id, type: "text", display: "front", x: HIDE_X, y: 0,
-    text: " ", font: "small", color: "#00000000", z_index: 0 };
-  return { id: id, type: "rectangle", display: "front", x: HIDE_X, y: 0, width: 1, height: 1,
-    fill: "solid", fill_colors: ["#00000000"], border_width: 0, z_index: 0 };
+// Deletes an element on the device: same id/type/payload, with display_until
+// in the past (the canvas service destroys it; type changes are rejected).
+function deleteEl(el) {
+  var d = {};
+  for (var k in el) d[k] = el[k];
+  d.display_until = "1";
+  return d;
 }
 
 function post(body) {
@@ -266,6 +266,7 @@ function fillEase(t) { t = clamp01(t); return 0.5 - 0.5 * Math.cos(Math.PI * t);
 // Anything shown last frame but not pushed now is hidden automatically.
 
 function pushSentence(out, mode, info, shownP, op) {
+  op = qa(op);
   if (op <= 0) return;
   var intLen = pctString(info.p, 1).indexOf(".");
   var pct = pctString(shownP, intLen);
@@ -330,20 +331,25 @@ function pushFill(out, mode, info, fill, glow, breath, shimmerX, live) {
   if (n > 0) out.push(rect("edg", n - 1, BAR_Y, 1, BAR_H, rgba(mode.edge, 0.3 + 0.55 * breath + 0.15 * glow), null, 8));
 }
 
+// Title-card timing (ms within TITLE_MS). The title + accent rules are a
+// pre-rendered native animation (anims/title_<mode>.anim, built by
+// build_year_progress_titles.py with the same timings) that the firmware plays
+// at 30 fps by itself; only the subtitle is drawn from JS.
+var TITLE_IN   = 800;      // fade-in
+var TITLE_OUT  = 750;      // fade-out at the end
+var SUB_DELAY  = 300;      // subtitle starts fading in after the title
+
+// Opacity quantised to 1/24 steps: below that the LEDs show no visible
+// difference, and skipping those resends leaves more frames for the motion.
+function qa(a) { return Math.round(clamp01(a) * 24) / 24; }
+
 function pushTitle(out, mode, info, t) {
-  // fade in, hold, fade out; slide down into place; accent rules grow outward
-  var op = Math.min(clamp01(t / 350), clamp01((TITLE_MS - t) / 400));
-  var tw = textWidth(mode.title, ADV_BOLD);
+  out.push({ id: "tan", type: "animation", display: "front", align: "top_left", x: 0, y: 0,
+             path: "anims/title_" + mode.key + ".anim", loop: false, z_index: 20 });
+  var fadeOut = clamp01((TITLE_MS - t) / TITLE_OUT);
+  var subOp = qa(Math.min(easeInOut((t - SUB_DELAY) / TITLE_IN), fadeOut) * 0.9);
   var sw = textWidth(info.sub, ADV_SMALL);
-  var tx = Math.floor((W - tw) / 2);
-  var slide = Math.round((1 - easeOutCubic(t / 600)) * -3);
-  var grow = Math.round(easeOutCubic((t - 150) / 800) * 10);
-  out.push(text("tt", mode.title, tx, TITLE_Y + slide, "bold", rgba(mode.num, op), 20));
-  out.push(text("ts", info.sub, Math.floor((W - sw) / 2), SUB_Y, "small", rgba(LABEL, op * 0.9), 20));
-  if (grow > 0) {
-    out.push(rect("rl", tx - 3 - grow, 4, grow, 1, rgba(mode.main, op), null, 20));
-    out.push(rect("rr", tx + tw + 3,   4, grow, 1, rgba(mode.main, op), null, 20));
-  }
+  if (subOp > 0) out.push(text("ts", info.sub, Math.floor((W - sw) / 2), SUB_Y, "small", rgba(LABEL, subOp), 20));
 }
 
 var BG = rect("bg", 0, 0, W, 16, "#000000FF", null, 0);
@@ -394,14 +400,34 @@ function buildFrame() {
 }
 
 // ── Render loop, paced to draw completion ───────────────────
-// `sent` maps id -> {json, type} for everything currently on screen. Each
-// frame sends only new/changed elements plus hides for ones that vanished.
+// `sent` maps id -> {json, el} for everything currently on screen. Each frame
+// sends only new/changed elements plus deletions for ones that vanished.
 var sent = {};
+
+// Frame-rate readout (toggle with OK): draw requests completed per second.
+var showFps = false;
+var fpsStamps = [];
+var fpsValue = 0;
+
+function pushFps(out) {
+  if (!showFps) return;
+  var s = String(fpsValue);
+  var w = textWidth(s, ADV_SMALL) + 2;
+  out.push(rect("fpb", W - w, 8, w, 7, "#000000FF", null, 40));
+  out.push(text("fpt", s, W - w + 1, 7, "small", "#FFFFFFFF", 41));
+}
+
+function countFrame(now) {
+  fpsStamps.push(now);
+  while (fpsStamps.length && fpsStamps[0] <= now - 1000) fpsStamps.shift();
+  fpsValue = fpsStamps.length;
+}
 
 function loop() {
   if (!running) return;
   var t0 = Date.now();
   var els = buildFrame();
+  pushFps(els);
   var changed = [], commit = [], seen = {};
 
   for (var i = 0; i < els.length; i++) {
@@ -409,19 +435,20 @@ function loop() {
     seen[el.id] = true;
     var js = JSON.stringify(el);
     var prev = sent[el.id];
-    if (!prev || prev.json !== js) { changed.push(el); commit.push([el.id, js, el.type]); }
+    if (!prev || prev.json !== js) { changed.push(el); commit.push([el.id, js, el]); }
   }
   for (var id in sent) {
-    if (!seen[id] && sent[id].json !== null) {
-      changed.push(hiddenEl(id, sent[id].type));
-      commit.push([id, null, sent[id].type]);
-    }
+    if (!seen[id]) { changed.push(deleteEl(sent[id].el)); commit.push([id, null, null]); }
   }
 
   var pace = phase === "live" ? FRAME_LIVE : FRAME_ANIM;
-  function next() { setTimeout(loop, Math.max(10, pace - (Date.now() - t0))); }
+  function next() {
+    var left = pace - (Date.now() - t0);
+    if (left <= 0) loop();               // behind schedule: no idle wait at all
+    else setTimeout(loop, Math.max(10, left));
+  }
 
-  if (changed.length === 0 && pendingLed === null) { next(); return; }
+  if (changed.length === 0 && pendingLed === null) { setTimeout(loop, Math.max(10, pace - (Date.now() - t0))); return; }
   if (changed.length === 0) changed.push(BG);
   var body = { application_name: APP, elements: changed };
   var led = pendingLed;
@@ -429,10 +456,11 @@ function loop() {
 
   post(body).then(function (r) {
     if (r && r.ok !== false) {
+      countFrame(Date.now());
       for (var k = 0; k < commit.length; k++) {
         var c = commit[k];
         if (c[1] === null) delete sent[c[0]];
-        else sent[c[0]] = { json: c[1], type: c[2] };
+        else sent[c[0]] = { json: c[1], el: c[2] };
       }
     } else if (led !== null && pendingLed === null) {
       pendingLed = led;              // retry the LED on the next frame
@@ -465,6 +493,9 @@ var unbind = listen("input", function (e) {
     if (phase === "drain") return;           // keep draining the old bar; new mode follows
     drainFrom = cur;
     setPhase(cur > 0.001 ? "drain" : "title");
+  } else if (e.key === "ok" && e.action === "press") {
+    showFps = !showFps;
+    fpsStamps = [];
   } else if (e.key === "back" && e.action === "press") {
     running = false;
     stopSound();
