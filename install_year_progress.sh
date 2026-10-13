@@ -41,6 +41,18 @@ printf '1' | curl -fsS ${AUTH[@]+"${AUTH[@]}"} -X POST \
   -H "Content-Type: application/octet-stream" --data-binary @- \
   "http://${HOST}/api/storage/write?path=/ext/apps_data/apps_menu/js_apps_enabled" >/dev/null
 
+echo "- checking the bar lists the app"
+if LIST=$(curl -fsS ${AUTH[@]+"${AUTH[@]}"} "http://${HOST}/api/apps/list" 2>/dev/null); then
+  if printf '%s' "$LIST" | grep -q "\"id\":\"${ID}\""; then
+    echo "  listed in Apps"
+  else
+    echo "  WARNING: the bar doesn't list ${ID}. Firmware 27.12+ skips apps whose"
+    echo "  appmeta/manifest.json has no \"api_version\"."
+  fi
+else
+  echo "  (this firmware has no /api/apps/list; skipped)"
+fi
+
 echo
 echo "Done. On the bar: flip the mode switch to Apps -> Year Progress -> Start."
 echo "Press Start inside the app to cycle Year -> Month -> Century."

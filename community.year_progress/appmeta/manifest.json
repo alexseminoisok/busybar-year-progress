@@ -3,6 +3,7 @@
     "id": "community.year_progress",
     "name": "Year Progress",
     "version": "1.4.0",
+    "api_version": "27.9.0",
     "description": "Year / month / century progress bar",
     "author": "alex",
     "heap_size_kib": 256,
